@@ -53,8 +53,9 @@ function nextBoundary(value: number, sorted: Threshold[], cap: number): number {
   return cap
 }
 
+/** Effective SP-per-point multiplier: a tagged skill gets `tagPointsMultiplier` points per SP-worth of cost. */
 function tagMult(tagged: boolean, config: Config): number {
-  return tagged ? config.tagCostMultiplier : 1
+  return tagged && config.tagPointsMultiplier > 0 ? 1 / config.tagPointsMultiplier : 1
 }
 
 export function spToValue(
@@ -105,33 +106,6 @@ function spBetween(from: number, to: number, tagged: boolean, config: Config): n
     v = boundary
   }
   return sp
-}
-
-/**
- * Total-SP delta needed to move the displayed (floored) value by `points` skill points:
- * positive `points` → SP to add (target capped at skillMax, 0 at cap),
- * negative `points` → negative SP to remove (target not below `start`).
- */
-export function spForPoints(
-  start: number,
-  totalSP: number,
-  tagged: boolean,
-  config: Config,
-  points: number,
-): number {
-  const { value } = spToValue(start, totalSP, tagged, config)
-  const shown = Math.floor(value + EPS)
-  if (points > 0) {
-    if (value >= config.skillMax - EPS) return 0
-    const target = Math.min(shown + points, config.skillMax)
-    return round9(spBetween(value, target, tagged, config))
-  }
-  if (points < 0) {
-    const target = Math.max(shown + points, start)
-    if (target >= value - EPS) return 0
-    return round9(-spBetween(target, value, tagged, config))
-  }
-  return 0
 }
 
 /** SP still needed for floor(value) to grow by 1 (Infinity at cap). */
@@ -257,7 +231,7 @@ export function computeBuild(build: Build, config: Config): BuildResult {
       totalSP,
       value,
       overflowSP,
-      costPerPoint: costAt(value, config) * tagMult(tagged, config),
+      costPerPoint: round9(costAt(value, config) * tagMult(tagged, config)),
       spToNextPoint: spToNextPoint(start, totalSP, tagged, config),
     }
   }

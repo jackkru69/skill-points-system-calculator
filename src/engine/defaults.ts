@@ -69,7 +69,7 @@ export const DEFAULT_CONFIG: Config = {
   bleedMode: 'incoming',
   bleedCoefDefault: 0.25,
   tagBonus: 20,
-  tagCostMultiplier: 0.5,
+  tagPointsMultiplier: 2,
   tagsNormal: 3,
   tagsSkilled: 1,
   skilledBonusSP: 24,

@@ -52,6 +52,9 @@ export function sanitizeConfig(raw: unknown): Config {
     const v = raw[key]
     if (isNum(v)) (out[key] as number) = v
   }
+  if (!isNum(raw.tagPointsMultiplier) && isNum(raw.tagCostMultiplier) && raw.tagCostMultiplier > 0) {
+    out.tagPointsMultiplier = 1 / raw.tagCostMultiplier
+  }
   const legacy = isLegacyBleed(raw)
   out.bleedMode = legacy ? 'outgoing' : isBleedMode(raw.bleedMode) ? raw.bleedMode : DEFAULT_CONFIG.bleedMode
   const rawSkills = Array.isArray(raw.skills) ? raw.skills : []

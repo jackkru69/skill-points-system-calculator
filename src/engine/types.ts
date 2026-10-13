@@ -59,7 +59,8 @@ export interface Config {
   bleedMode: BleedMode
   bleedCoefDefault: number
   tagBonus: number
-  tagCostMultiplier: number
+  /** skill points a tagged skill gets per 1 SP of base cost (2 = ×2 points) */
+  tagPointsMultiplier: number
   tagsNormal: number
   tagsSkilled: number
   skilledBonusSP: number

@@ -7,7 +7,6 @@ import {
   costAt,
   directSP,
   spEarned,
-  spForPoints,
   spPerLevel,
   spToNextPoint,
   spToValue,
@@ -245,73 +244,35 @@ describe('пороги', () => {
   })
 })
 
-describe('spForPoints', () => {
-  it('+N пунктов: цена с порогами и дробным остатком', () => {
-    expect(spForPoints(50, 0, false, cfg, 1)).toBe(1)
-    expect(spForPoints(50, 0, false, cfg, 10)).toBe(10)
-    // 95 → 105: 5 × 1 + 5 × 2
-    expect(spForPoints(95, 0, false, cfg, 10)).toBe(15)
-    // 55.5 → 56
-    expect(spForPoints(50, 5.5, false, cfg, 1)).toBe(0.5)
-    expect(spForPoints(299, 0, false, cfg, 10)).toBe(6)
-    expect(spForPoints(300, 0, false, cfg, 1)).toBe(0)
-  })
-
-  it('тэг: пункт до 100 стоит 0.5 СП, после — 1', () => {
-    expect(spForPoints(70, 0, true, cfg, 1)).toBe(0.5)
-    expect(spForPoints(70, 0, true, cfg, 10)).toBe(5)
-    expect(spForPoints(100, 0, true, cfg, 1)).toBe(1)
-    expect(spForPoints(95, 0, true, cfg, 10)).toBe(7.5)
-  })
-
-  it('−N пунктов: отрицательная дельта, не ниже старта', () => {
-    expect(spForPoints(50, 10, false, cfg, -1)).toBe(-1)
-    expect(spForPoints(50, 10, false, cfg, -10)).toBe(-10)
-    expect(spForPoints(50, 10, false, cfg, -50)).toBe(-10)
-    // 55.5 (показано 55) → 54
-    expect(spForPoints(50, 5.5, false, cfg, -1)).toBe(-1.5)
-    expect(spForPoints(95, 7.5, true, cfg, -10)).toBe(-7.5)
-    expect(spForPoints(50, 0, false, cfg, -1)).toBe(0)
-  })
-
-  it('согласован с spToValue', () => {
-    for (const [start, sp, tagged] of [
-      [37, 12.3, false],
-      [95, 3, true],
-      [140, 80, false],
-      [260, 10, true],
-    ] as const) {
-      for (const n of [1, 5, 10, 50]) {
-        const v0 = Math.floor(spToValue(start, sp, tagged, cfg).value + 1e-9)
-        const d = spForPoints(start, sp, tagged, cfg, n)
-        expect(spToValue(start, sp + d, tagged, cfg).value).toBeCloseTo(Math.min(v0 + n, cfg.skillMax), 9)
-      }
-    }
-  })
-})
-
 describe('тэг', () => {
-  it('полцены', () => {
+  it('×2 пункта за СП', () => {
     expect(spToValue(100, 10, true, cfg).value).toBe(110)
     // 5 pts × 0.5 = 2.5 SP, then 12.5 SP at 1 per point
     expect(spToValue(95, 15, true, cfg).value).toBe(112.5)
   })
 
-  it('+бонус к старту и полцены в computeBuild', () => {
+  it('+бонус к старту и ×2 в computeBuild', () => {
     const r = computeBuild(withAlloc({ unarmed: 10 }, { tags: ['unarmed'] }), cfg)
     expect(r.skills.unarmed.start).toBe(120)
     expect(r.skills.unarmed.value).toBe(130)
     expect(r.skills.unarmed.costPerPoint).toBe(1)
   })
 
-  it('+1 пункт тэгнутого навыка до 100 стоит 0.5 СП', () => {
+  it('тэг ×2 пункта за СП: 1 СП до 100 → +2, на пороге цены 2 → +1', () => {
     const r = computeBuild(withAlloc({}, { tags: ['sneak'] }), cfg)
     const s = r.skills.sneak
     expect(s.start).toBe(40)
     expect(s.costPerPoint).toBe(0.5)
-    expect(spForPoints(s.start, s.totalSP, s.tagged, cfg, 1)).toBe(0.5)
-    const r2 = computeBuild(withAlloc({ sneak: 0.5 }, { tags: ['sneak'] }), cfg)
-    expect(r2.skills.sneak.value).toBe(41)
+    expect(computeBuild(withAlloc({ sneak: 1 }, { tags: ['sneak'] }), cfg).skills.sneak.value).toBe(42)
+    expect(spToValue(100, 1, true, cfg).value).toBe(101)
+    expect(spToValue(100, 1, false, cfg).value).toBe(100.5)
+    expect(spToValue(150, 3, true, cfg).value).toBe(152)
+  })
+
+  it('tagPointsMultiplier настраивается', () => {
+    const config: Config = { ...cfg, tagPointsMultiplier: 3 }
+    expect(spToValue(40, 1, true, config).value).toBe(43)
+    expect(spToValue(40, 1, true, { ...cfg, tagPointsMultiplier: 0 }).value).toBe(41)
   })
 
   it('тэг источника не влияет на блид', () => {

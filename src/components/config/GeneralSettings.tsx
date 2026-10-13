@@ -30,7 +30,7 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     title: 'Тэги и Скиллед',
     fields: [
       { key: 'tagBonus', label: 'Тэг-бонус', hint: 'флэт к старту', min: 0 },
-      { key: 'tagCostMultiplier', label: 'Множ. цены тэга', min: 0, step: 0.05 },
+      { key: 'tagPointsMultiplier', label: 'Тэг: пунктов за 1 СП (×)', min: 0, step: 0.5 },
       { key: 'tagsNormal', label: 'Тэгов (обычно)', integer: true, min: 0 },
       { key: 'tagsSkilled', label: 'Тэгов (Скиллед)', integer: true, min: 0 },
       { key: 'skilledBonusSP', label: 'Бонус СП Скилледа', hint: 'за уровень', min: 0 },

@@ -13,67 +13,62 @@ const TZ_BUILD: Build = {
 const state = () => useAppStore.getState()
 const result = () => computeBuild(state().build, state().config)
 
-describe('addPoints', () => {
+describe('addSP', () => {
   beforeEach(() => {
     useAppStore.setState({ config: structuredClone(DEFAULT_CONFIG), build: structuredClone(TZ_BUILD) })
   })
 
-  it('тэг: +1 пункт → значение +1, доступно −0.5 СП', () => {
+  it('тэг: +1 СП → значение +2, доступно −1 СП', () => {
     state().toggleTag('sneak')
     const before = result()
-    state().addPoints('sneak', 1)
+    state().addSP('sneak', 1)
     const after = result()
-    expect(after.skills.sneak.value).toBe(before.skills.sneak.value + 1)
-    expect(after.spAvailable).toBe(before.spAvailable - 0.5)
+    expect(after.skills.sneak.value).toBe(before.skills.sneak.value + 2)
+    expect(after.spAvailable).toBe(before.spAvailable - 1)
   })
 
-  it('без тэга +1 пункт стоит 1 СП; +10 → +10 пунктов', () => {
-    state().addPoints('sneak', 1)
+  it('без тэга +1 СП → +1; −1 возвращает', () => {
+    state().addSP('sneak', 1)
     expect(result().skills.sneak.value).toBe(21)
     expect(result().spAvailable).toBe(7)
-    state().addPoints('sneak', -1)
+    state().addSP('sneak', -1)
     expect(result().skills.sneak.value).toBe(20)
     expect(result().spAvailable).toBe(8)
   })
 
-  it('не хватает на +N → покупает сколько хватает целых пунктов; затем остаток', () => {
-    // 8 СП, тэг → до 100 стоит 0.5/пункт: 16 пунктов
-    state().toggleTag('sneak')
-    state().addPoints('sneak', 50)
-    expect(result().skills.sneak.value).toBe(56)
+  it('+N ограничено целыми доступными СП; дробные суммы отбрасываются', () => {
+    state().addSP('sneak', 50)
+    expect(state().build.levels[1].alloc.sneak).toBe(8)
     expect(result().spAvailable).toBe(0)
-    // Untagged skill over the 100 threshold costs 2/pt: 8 SP → +4 points, then a 1-SP remainder makes half a point
-    useAppStore.setState({ build: structuredClone(TZ_BUILD) })
-    state().addPoints('melee', 10)
-    expect(result().skills.melee.value).toBe(104)
-    expect(result().spAvailable).toBe(0)
-    // 1 SP left, next point costs 2 → the remainder goes in as half a point
-    useAppStore.setState({ config: { ...DEFAULT_CONFIG, startingSP: 1 } })
-    state().addPoints('melee', 1)
-    expect(result().skills.melee.value).toBe(104.5)
-    expect(result().spAvailable).toBe(0)
+    useAppStore.setState({ build: structuredClone(TZ_BUILD), config: { ...DEFAULT_CONFIG, startingSP: 0.5 } })
+    state().addSP('sneak', 10)
+    expect(state().build.levels[1].alloc.sneak).toBe(8)
+    state().addSP('sneak', 1)
+    expect(state().build.levels[1].alloc.sneak).toBe(8)
+    state().addSP('melee', 0.7)
+    expect(state().build.levels[1].alloc.melee).toBeUndefined()
+  })
+
+  it('тэг на пороге цены 2: 1 СП → +1', () => {
+    state().toggleTag('melee')
+    // melee start = 100 + 20 = 120 → cost 2, tag ×2
+    state().addSP('melee', 1)
+    expect(result().skills.melee.value).toBe(121)
   })
 
   it('−N возвращает только из текущего уровня', () => {
     useAppStore.setState({
       build: { ...TZ_BUILD, levels: [{ alloc: { sneak: 5 } }, { alloc: { sneak: 2 } }] },
     })
-    state().addPoints('sneak', -10)
+    state().addSP('sneak', -10)
     expect(state().build.levels[1].alloc.sneak).toBeUndefined()
     expect(state().build.levels[0].alloc.sneak).toBe(5)
     expect(result().skills.sneak.value).toBe(25)
   })
 
-  it('само-блид учитывается: +1 пункт поднимает значение ровно на 1', () => {
-    useAppStore.setState({
-      config: {
-        ...DEFAULT_CONFIG,
-        skills: DEFAULT_CONFIG.skills.map((s) => (s.id === 'barter' ? { ...s, bleedLinks: ['barter', null] } : s)),
-      },
-    })
-    state().addPoints('barter', 4)
-    expect(result().skills.barter.value).toBe(12)
-    expect(result().spAvailable).toBe(4.8)
+  it('setCurrentAlloc округляет до целого', () => {
+    state().setCurrentAlloc('sneak', 2.6)
+    expect(state().build.levels[1].alloc.sneak).toBe(3)
   })
 })
 

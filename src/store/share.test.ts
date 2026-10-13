@@ -46,4 +46,12 @@ describe('share', () => {
     expect(c.skills.find((s) => s.id === 'smallGuns')?.bleedLinks).toEqual(['mediumGuns', null])
     expect(c.skills.find((s) => s.id === 'firstAid')).toMatchObject({ bleedLinks: ['doctor', null], bleedCoef: 0.3 })
   })
+
+  it('миграция tagCostMultiplier → tagPointsMultiplier = 1/x', () => {
+    expect(sanitizeConfig({ tagCostMultiplier: 0.5 }).tagPointsMultiplier).toBe(2)
+    expect(sanitizeConfig({ tagCostMultiplier: 0.25 }).tagPointsMultiplier).toBe(4)
+    expect(sanitizeConfig({ tagCostMultiplier: 0 }).tagPointsMultiplier).toBe(2)
+    expect(sanitizeConfig({ tagCostMultiplier: 0.5, tagPointsMultiplier: 3 }).tagPointsMultiplier).toBe(3)
+    expect('tagCostMultiplier' in sanitizeConfig({ tagCostMultiplier: 0.5 })).toBe(false)
+  })
 })

@@ -3,7 +3,7 @@ import {
   STATS,
   bleedGraph,
   costAt,
-  spForPoints,
+  spToValue,
   type BleedLink,
   type BleedNode,
   type Config,
@@ -92,7 +92,7 @@ export function SkillsTable() {
           <span className="flex items-center gap-1">
             <span className="size-2 rounded-sm bg-emerald-400" /> получает от
           </span>
-          <span>±N — пункты навыка, Shift — ×5</span>
+          <span>±N — вложить/вернуть СП, Shift — ×5</span>
         </div>
       </div>
       {showLevelHint && (
@@ -125,12 +125,12 @@ export function SkillsTable() {
               <th className="w-44 px-2 py-1.5 text-left font-medium">Значение</th>
               <th
                 className="px-2 py-1.5 text-right font-medium"
-                title="Цена следующего пункта навыка в СП (тэг — в 2 раза дешевле)"
+                title={`Сколько пунктов навыка даёт 1 СП при текущем значении (тэг — ×${fmt(config.tagPointsMultiplier)})`}
               >
-                Цена, СП/пункт
+                Пунктов за СП
               </th>
-              <th className="px-2 py-1.5 text-center font-medium" title="Кнопки меняют значение навыка на N пунктов">
-                Пункты навыка
+              <th className="px-2 py-1.5 text-center font-medium" title="Кнопки вкладывают / возвращают N СП в текущем уровне">
+                Вложить СП
               </th>
             </tr>
           </thead>
@@ -177,37 +177,38 @@ const SkillRow = memo(function SkillRow({
   onHover,
 }: SkillRowProps) {
   const toggleTag = useAppStore((s) => s.toggleTag)
-  const addPoints = useAppStore((s) => s.addPoints)
+  const addSP = useAppStore((s) => s.addSP)
 
   if (!r) return null
 
   const outgoing = node?.outgoing ?? []
   const incoming = node?.incoming ?? []
   const atCap = r.value >= config.skillMax - EPS
-  const canAdd = spAvailable > EPS && !atCap
+  const freeSP = Math.floor(Math.max(0, spAvailable) + EPS)
+  const canAdd = freeSP >= 1 && !atCap
   const canRemove = r.currentLevelSP > EPS
   const shown = displayValue(r.value)
 
   const tint = cn('bg-linear-to-r', relation ? ROW_TINT[relation] : r.tagged && ROW_TINT.tagged)
 
   const mult = (e: MouseEvent) => (e.shiftKey ? 5 : 1)
-  const change = (points: number) => (e: MouseEvent) => addPoints(skill.id, points * mult(e))
-  const spFor = (points: number) => spForPoints(r.start, r.totalSP, r.tagged, config, points)
+  const change = (sp: number) => (e: MouseEvent) => addSP(skill.id, sp * mult(e))
+  const valueWith = (deltaSP: number) => spToValue(r.start, r.totalSP + deltaSP, r.tagged, config).value
 
-  const addTitle = (points: number) => {
+  const addTitle = (sp: number) => {
     if (atCap) return 'Навык на капе'
-    const need = spFor(points)
-    const target = Math.min(shown + points, config.skillMax)
-    const base = `+${points} ${pointsWord(points)}: ${fmt(need)} СП → ${target}% (Shift: +${points * 5})`
-    if (need <= spAvailable + EPS) return base
-    if (spAvailable <= EPS) return `${base} — нет свободных СП`
-    return `${base} — не хватает СП, вложится сколько хватит (доступно ${fmt(spAvailable)})`
+    if (freeSP < 1) return 'Нет свободных СП'
+    const spend = Math.min(sp, freeSP)
+    const limited = spend < sp ? ` (доступно только ${spend})` : ''
+    return `+${spend} СП${limited} → ${fmt(valueWith(spend))}% (Shift: +${sp * 5} СП)`
   }
-  const removeTitle = (points: number) => {
+  const removeTitle = (sp: number) => {
     if (!canRemove) return 'На текущем уровне в навык ничего не вложено'
-    const refund = Math.min(-spFor(-points), r.currentLevelSP)
-    return `−${points} ${pointsWord(points)}: вернёт ${fmt(refund)} СП (только из текущего уровня; Shift: −${points * 5})`
+    const refund = Math.min(sp, r.currentLevelSP)
+    return `−${fmt(refund)} СП → ${fmt(valueWith(-refund))}% (только из текущего уровня; Shift: −${sp * 5} СП)`
   }
+  const rate = r.costPerPoint > 0 ? 1 / r.costPerPoint : 0
+  const baseRate = config.baseCost > 0 ? (r.tagged ? config.tagPointsMultiplier : 1) / config.baseCost : 0
 
   return (
     <tr onMouseEnter={() => onHover(skill.id)} className={cn('border-b border-zinc-800/70', tint)}>
@@ -332,21 +333,17 @@ const SkillRow = memo(function SkillRow({
           <span className="text-xs text-emerald-400">кап</span>
         ) : (
           <span
-            title={`Следующий пункт: ${fmt(r.costPerPoint)} СП (база ${fmt(costAt(r.value, config))}${r.tagged ? ` × тэг ${fmt(config.tagCostMultiplier)}` : ''})`}
+            title={`1 СП → +${fmt(rate, 4)} ${pointsWord(rate)} (цена пункта ${fmt(costAt(r.value, config))} СП${r.tagged ? `, тэг ×${fmt(config.tagPointsMultiplier)}` : ''}). До следующего целого пункта: ${fmt(r.spToNextPoint)} СП`}
           >
             <span
               className={cn(
-                r.costPerPoint > config.baseCost * (r.tagged ? config.tagCostMultiplier : 1)
-                  ? 'text-amber-300'
-                  : r.tagged
-                    ? 'text-amber-200'
-                    : 'text-zinc-300',
+                rate < baseRate - EPS ? 'text-amber-300' : r.tagged ? 'text-amber-200' : 'text-zinc-300',
               )}
             >
-              {fmt(r.costPerPoint)}
+              +{fmt(rate)}
             </span>
-            <span className="ml-0.5 text-[10px] text-zinc-500">СП</span>
-            {r.tagged && <span className="ml-1 text-[10px] text-amber-400/80">★×{fmt(config.tagCostMultiplier)}</span>}
+            <span className="ml-0.5 text-[10px] text-zinc-500">/ СП</span>
+            {r.tagged && <span className="ml-1 text-[10px] text-amber-400/80">★×{fmt(config.tagPointsMultiplier)}</span>}
           </span>
         )}
       </td>
@@ -372,7 +369,7 @@ const SkillRow = memo(function SkillRow({
 })
 
 function pointsWord(n: number): string {
-  return plural(n, 'пункт', 'пункта', 'пунктов')
+  return Number.isInteger(n) ? plural(n, 'пункт', 'пункта', 'пунктов') : 'пункта'
 }
 
 function formatLinks(links: BleedLink[], names: Record<SkillId, string>) {
