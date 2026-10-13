@@ -47,8 +47,8 @@ export function TraitsPanel() {
         }
       />
       <p className="mt-2 text-xs leading-snug text-zinc-500">
-        Тэг: +{config.tagBonus} к навыку, ×{config.tagPointsMultiplier} пунктов за каждое СП. Клик по ★ в
-        таблице.
+        Тэг: +{config.tagBonus} к навыку; каждый шаг прокачки стоит столько же СП, но даёт +
+        {config.tagPointsMultiplier} вместо +1. Клик по ★ в таблице.
       </p>
     </Panel>
   )

@@ -13,57 +13,86 @@ const TZ_BUILD: Build = {
 const state = () => useAppStore.getState()
 const result = () => computeBuild(state().build, state().config)
 
-describe('addSP', () => {
+describe('addSteps', () => {
   beforeEach(() => {
     useAppStore.setState({ config: structuredClone(DEFAULT_CONFIG), build: structuredClone(TZ_BUILD) })
   })
 
-  it('тэг: +1 СП → значение +2, доступно −1 СП', () => {
+  it('тэг на 45: +1 шаг → 47, доступно −1 СП', () => {
+    // sneak base AG5×CH5 = 25; тэг +20 → 45
+    useAppStore.setState({ build: { ...TZ_BUILD, stats: { ...TZ_BUILD.stats, AG: 5, CH: 5 } } })
     state().toggleTag('sneak')
     const before = result()
-    state().addSP('sneak', 1)
+    expect(before.skills.sneak.value).toBe(45)
+    state().addSteps('sneak', 1)
     const after = result()
-    expect(after.skills.sneak.value).toBe(before.skills.sneak.value + 2)
+    expect(after.skills.sneak.value).toBe(47)
     expect(after.spAvailable).toBe(before.spAvailable - 1)
   })
 
-  it('без тэга +1 СП → +1; −1 возвращает', () => {
-    state().addSP('sneak', 1)
-    expect(result().skills.sneak.value).toBe(21)
-    expect(result().spAvailable).toBe(7)
-    state().addSP('sneak', -1)
-    expect(result().skills.sneak.value).toBe(20)
-    expect(result().spAvailable).toBe(8)
+  it('без тэга на 120: +1 шаг → +1, доступно −2 СП', () => {
+    useAppStore.setState({
+      build: { ...TZ_BUILD, levels: [{ alloc: { melee: 40 } }, { alloc: {} }] },
+      config: { ...DEFAULT_CONFIG, startingSP: 50 },
+    })
+    const before = result()
+    expect(before.skills.melee.value).toBe(120)
+    state().addSteps('melee', 1)
+    const after = result()
+    expect(after.skills.melee.value).toBe(121)
+    expect(after.spAvailable).toBe(before.spAvailable - 2)
   })
 
-  it('+N ограничено целыми доступными СП; дробные суммы отбрасываются', () => {
-    state().addSP('sneak', 50)
-    expect(state().build.levels[1].alloc.sneak).toBe(8)
-    expect(result().spAvailable).toBe(0)
-    useAppStore.setState({ build: structuredClone(TZ_BUILD), config: { ...DEFAULT_CONFIG, startingSP: 0.5 } })
-    state().addSP('sneak', 10)
-    expect(state().build.levels[1].alloc.sneak).toBe(8)
-    state().addSP('sneak', 1)
-    expect(state().build.levels[1].alloc.sneak).toBe(8)
-    state().addSP('melee', 0.7)
+  it('−1 возвращает ровно цену последнего шага', () => {
+    state().toggleTag('melee')
+    // melee 100 + 20 = 120 → шаг 2 СП, +2
+    state().addSteps('melee', 3)
+    expect(result().skills.melee.value).toBe(126)
+    expect(result().spAvailable).toBe(2)
+    state().addSteps('melee', -1)
+    expect(result().skills.melee.value).toBe(124)
+    expect(result().spAvailable).toBe(4)
+    state().addSteps('melee', -10)
+    expect(result().skills.melee.value).toBe(120)
+    expect(result().spAvailable).toBe(8)
     expect(state().build.levels[1].alloc.melee).toBeUndefined()
   })
 
-  it('тэг на пороге цены 2: 1 СП → +1', () => {
-    state().toggleTag('melee')
-    // melee start = 100 + 20 = 120 → cost 2, tag ×2
-    state().addSP('melee', 1)
-    expect(result().skills.melee.value).toBe(121)
+  it('+N ограничено доступными СП; шаг, на который не хватает, не делается', () => {
+    state().addSteps('sneak', 50)
+    expect(state().build.levels[1].alloc.sneak).toBe(8)
+    expect(result().spAvailable).toBe(0)
+    // melee at 100: step = 2 SP; 9 SP free → 4 steps, 1 SP left
+    useAppStore.setState({ build: structuredClone(TZ_BUILD), config: { ...DEFAULT_CONFIG, startingSP: 1 } })
+    state().addSteps('melee', 5)
+    expect(state().build.levels[1].alloc.melee).toBe(8)
+    expect(result().spAvailable).toBe(1)
+    state().addSteps('melee', 1)
+    expect(state().build.levels[1].alloc.melee).toBe(8)
   })
 
   it('−N возвращает только из текущего уровня', () => {
     useAppStore.setState({
       build: { ...TZ_BUILD, levels: [{ alloc: { sneak: 5 } }, { alloc: { sneak: 2 } }] },
     })
-    state().addSP('sneak', -10)
+    state().addSteps('sneak', -10)
     expect(state().build.levels[1].alloc.sneak).toBeUndefined()
     expect(state().build.levels[0].alloc.sneak).toBe(5)
     expect(result().skills.sneak.value).toBe(25)
+  })
+
+  it('частичный прогресс от блида: +1 докупает остаток шага (дробные СП)', () => {
+    // 2 СП в Средние → Большие получают 0.5 bleed → 50.5
+    useAppStore.setState({ build: { ...TZ_BUILD, levels: [{ alloc: { mediumGuns: 2 } }, { alloc: {} }] } })
+    expect(result().skills.bigGuns.value).toBe(50.5)
+    expect(result().skills.bigGuns.spToNextStep).toBe(0.5)
+    state().addSteps('bigGuns', 1)
+    expect(state().build.levels[1].alloc.bigGuns).toBe(0.5)
+    expect(result().skills.bigGuns.value).toBe(51)
+    state().addSteps('bigGuns', 1)
+    expect(result().skills.bigGuns.value).toBe(52)
+    state().addSteps('bigGuns', -1)
+    expect(state().build.levels[1].alloc.bigGuns).toBe(0.5)
   })
 
   it('setCurrentAlloc округляет до целого', () => {

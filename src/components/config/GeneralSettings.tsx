@@ -30,7 +30,7 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     title: 'Тэги и Скиллед',
     fields: [
       { key: 'tagBonus', label: 'Тэг-бонус', hint: 'флэт к старту', min: 0 },
-      { key: 'tagPointsMultiplier', label: 'Тэг: пунктов за 1 СП (×)', min: 0, step: 0.5 },
+      { key: 'tagPointsMultiplier', label: 'Тэг: пунктов за шаг', hint: 'без тэга +1, цена та же', min: 0.5, step: 0.5 },
       { key: 'tagsNormal', label: 'Тэгов (обычно)', integer: true, min: 0 },
       { key: 'tagsSkilled', label: 'Тэгов (Скиллед)', integer: true, min: 0 },
       { key: 'skilledBonusSP', label: 'Бонус СП Скилледа', hint: 'за уровень', min: 0 },
@@ -48,7 +48,7 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     title: 'Скиллы',
     fields: [
       { key: 'skillMax', label: 'Кап скилла', min: 1 },
-      { key: 'baseCost', label: 'Базовая цена', hint: 'СП/пункт до 1-го порога', min: 0, step: 0.5 },
+      { key: 'baseCost', label: 'Базовая цена', hint: 'СП за шаг до 1-го порога', min: 0, step: 0.5 },
       { key: 'bleedCoefDefault', label: 'Коэф. блида', hint: 'глобальный', min: 0, step: 0.05 },
     ],
   },

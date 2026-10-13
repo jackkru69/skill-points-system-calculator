@@ -2,7 +2,7 @@ import { memo, useMemo, useState, type MouseEvent } from 'react'
 import {
   STATS,
   bleedGraph,
-  costAt,
+  stepsDeltaSP,
   spToValue,
   type BleedLink,
   type BleedNode,
@@ -92,7 +92,7 @@ export function SkillsTable() {
           <span className="flex items-center gap-1">
             <span className="size-2 rounded-sm bg-emerald-400" /> получает от
           </span>
-          <span>±N — вложить/вернуть СП, Shift — ×5</span>
+          <span>±N — прокачать/откатить N шагов, Shift — ×5</span>
         </div>
       </div>
       {showLevelHint && (
@@ -125,12 +125,12 @@ export function SkillsTable() {
               <th className="w-44 px-2 py-1.5 text-left font-medium">Значение</th>
               <th
                 className="px-2 py-1.5 text-right font-medium"
-                title={`Сколько пунктов навыка даёт 1 СП при текущем значении (тэг — ×${fmt(config.tagPointsMultiplier)})`}
+                title={`Цена следующего шага и прирост за шаг (тэг — +${fmt(config.tagPointsMultiplier)} за ту же цену)`}
               >
-                Пунктов за СП
+                Шаг
               </th>
-              <th className="px-2 py-1.5 text-center font-medium" title="Кнопки вкладывают / возвращают N СП в текущем уровне">
-                Вложить СП
+              <th className="px-2 py-1.5 text-center font-medium" title="Кнопки прокачивают / откатывают N шагов в текущем уровне">
+                Прокачка
               </th>
             </tr>
           </thead>
@@ -177,38 +177,46 @@ const SkillRow = memo(function SkillRow({
   onHover,
 }: SkillRowProps) {
   const toggleTag = useAppStore((s) => s.toggleTag)
-  const addSP = useAppStore((s) => s.addSP)
+  const addSteps = useAppStore((s) => s.addSteps)
 
   if (!r) return null
 
   const outgoing = node?.outgoing ?? []
   const incoming = node?.incoming ?? []
   const atCap = r.value >= config.skillMax - EPS
-  const freeSP = Math.floor(Math.max(0, spAvailable) + EPS)
-  const canAdd = freeSP >= 1 && !atCap
+  const free = Math.max(0, spAvailable)
+  const canAdd = !atCap && free >= r.spToNextStep - EPS
   const canRemove = r.currentLevelSP > EPS
   const shown = displayValue(r.value)
+  const partial = r.stepProgressSP > EPS
 
   const tint = cn('bg-linear-to-r', relation ? ROW_TINT[relation] : r.tagged && ROW_TINT.tagged)
 
   const mult = (e: MouseEvent) => (e.shiftKey ? 5 : 1)
-  const change = (sp: number) => (e: MouseEvent) => addSP(skill.id, sp * mult(e))
+  const change = (steps: number) => (e: MouseEvent) => addSteps(skill.id, steps * mult(e))
+  const plan = (steps: number) =>
+    stepsDeltaSP(r.start, r.totalSP, r.tagged, config, steps, steps > 0 ? free : r.currentLevelSP)
   const valueWith = (deltaSP: number) => spToValue(r.start, r.totalSP + deltaSP, r.tagged, config).value
+  const stepsWord = (n: number) => plural(n, 'шаг', 'шага', 'шагов')
 
-  const addTitle = (sp: number) => {
+  const addTitle = (n: number) => {
     if (atCap) return 'Навык на капе'
-    if (freeSP < 1) return 'Нет свободных СП'
-    const spend = Math.min(sp, freeSP)
-    const limited = spend < sp ? ` (доступно только ${spend})` : ''
-    return `+${spend} СП${limited} → ${fmt(valueWith(spend))}% (Shift: +${sp * 5} СП)`
+    if (!canAdd) return `Не хватает СП на шаг (нужно ${fmt(r.spToNextStep)})`
+    const { sp, steps } = plan(n)
+    const limited = steps < n ? ` (хватает только на ${steps})` : ''
+    return `+${n} ${stepsWord(n)}${limited}: −${fmt(sp)} СП → ${fmt(valueWith(sp))}% (Shift: +${n * 5})`
   }
-  const removeTitle = (sp: number) => {
+  const removeTitle = (n: number) => {
     if (!canRemove) return 'На текущем уровне в навык ничего не вложено'
-    const refund = Math.min(sp, r.currentLevelSP)
-    return `−${fmt(refund)} СП → ${fmt(valueWith(-refund))}% (только из текущего уровня; Shift: −${sp * 5} СП)`
+    const { sp, steps } = plan(-n)
+    return `−${steps} ${stepsWord(steps)}: +${fmt(-sp)} СП → ${fmt(valueWith(sp))}% (только из текущего уровня; Shift: −${n * 5})`
   }
-  const rate = r.costPerPoint > 0 ? 1 / r.costPerPoint : 0
-  const baseRate = config.baseCost > 0 ? (r.tagged ? config.tagPointsMultiplier : 1) / config.baseCost : 0
+  const stepTitle =
+    `Шаг: ${fmt(r.stepCost)} СП → +${fmt(r.stepGain)} ${pointsWord(r.stepGain)}` +
+    (r.tagged ? ` (тэг: +${fmt(r.stepGain)} вместо +1 за ту же цену)` : '') +
+    (partial
+      ? `. Текущий шаг начат: вложено ${fmt(r.stepProgressSP)} из ${fmt(r.stepCost)} СП, до завершения ${fmt(r.spToNextStep)} СП`
+      : '')
 
   return (
     <tr onMouseEnter={() => onHover(skill.id)} className={cn('border-b border-zinc-800/70', tint)}>
@@ -332,18 +340,17 @@ const SkillRow = memo(function SkillRow({
         {atCap ? (
           <span className="text-xs text-emerald-400">кап</span>
         ) : (
-          <span
-            title={`1 СП → +${fmt(rate, 4)} ${pointsWord(rate)} (цена пункта ${fmt(costAt(r.value, config))} СП${r.tagged ? `, тэг ×${fmt(config.tagPointsMultiplier)}` : ''}). До следующего целого пункта: ${fmt(r.spToNextPoint)} СП`}
-          >
-            <span
-              className={cn(
-                rate < baseRate - EPS ? 'text-amber-300' : r.tagged ? 'text-amber-200' : 'text-zinc-300',
-              )}
-            >
-              +{fmt(rate)}
+          <span title={stepTitle}>
+            <span className={cn(r.stepCost > config.baseCost ? 'text-amber-300' : 'text-zinc-300')}>
+              {fmt(r.stepCost)}
             </span>
-            <span className="ml-0.5 text-[10px] text-zinc-500">/ СП</span>
-            {r.tagged && <span className="ml-1 text-[10px] text-amber-400/80">★×{fmt(config.tagPointsMultiplier)}</span>}
+            <span className="text-[10px] text-zinc-500"> СП → </span>
+            <span className={r.tagged ? 'text-amber-200' : 'text-zinc-300'}>+{fmt(r.stepGain)}</span>
+            {partial && (
+              <span className="ml-1 text-[10px] text-sky-300" title={`До завершения шага: ${fmt(r.spToNextStep)} СП`}>
+                (ещё {fmt(r.spToNextStep)})
+              </span>
+            )}
           </span>
         )}
       </td>
@@ -401,7 +408,7 @@ function ValueBar({ r, config }: { r: SkillResult; config: Config }) {
           key={i}
           className="absolute inset-y-0 w-px bg-zinc-950/80"
           style={{ left: pct(t.from) }}
-          title={`с ${t.from}: ${fmt(t.cost)} СП/пункт`}
+          title={`с ${t.from}: шаг ${fmt(t.cost)} СП`}
         />
       ))}
     </div>

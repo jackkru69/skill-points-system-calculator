@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { computeBuild, computeHistory, round9 } from '../engine/calc'
+import { computeBuild, computeHistory, round9, stepsDeltaSP } from '../engine/calc'
 import { DEFAULT_BUILD, DEFAULT_CONFIG } from '../engine/defaults'
 import type {
   Build,
@@ -25,7 +25,8 @@ export interface AppState {
   setStat: (id: StatId, value: number) => void
   toggleTag: (skillId: SkillId) => void
   setSkilled: (skilled: boolean) => void
-  addSP: (skillId: SkillId, amount: number) => void
+  /** n > 0: complete the next n steps (while SP suffice); n < 0: refund the last |n| steps of the current level */
+  addSteps: (skillId: SkillId, n: number) => void
   setCurrentAlloc: (skillId: SkillId, value: number) => void
   levelUp: () => void
   levelUpTo: (n: number) => void
@@ -85,20 +86,18 @@ export const useAppStore = create<AppState>()(
 
       setSkilled: (skilled) => set((s) => ({ build: { ...s.build, skilled } })),
 
-      addSP: (skillId, amount) => {
-        const n = Math.trunc(amount)
-        if (!Number.isFinite(n) || n === 0) return
+      addSteps: (skillId, n) => {
+        const steps = Math.trunc(n)
+        if (!Number.isFinite(steps) || steps === 0) return
         const { build, config } = get()
+        const result = computeBuild(build, config)
+        const r = result.skills[skillId]
+        if (!r) return
         const cur = currentAlloc(build, skillId)
-        let next: number
-        if (n < 0) {
-          next = Math.max(0, cur + n)
-        } else {
-          const available = Math.floor(Math.max(0, computeBuild(build, config).spAvailable) + 1e-9)
-          next = cur + Math.min(n, available)
-        }
-        if (round9(next) === round9(cur)) return
-        set({ build: withCurrentAlloc(build, skillId, next) })
+        const limit = steps > 0 ? Math.max(0, result.spAvailable) : cur
+        const { sp } = stepsDeltaSP(r.start, r.totalSP, r.tagged, config, steps, limit)
+        if (Math.abs(sp) < 1e-9) return
+        set({ build: withCurrentAlloc(build, skillId, Math.max(0, cur + sp)) })
       },
 
       setCurrentAlloc: (skillId, value) => {
@@ -164,8 +163,8 @@ export const useAppStore = create<AppState>()(
       setConfigOpen: (configOpen) => set({ configOpen }),
     }),
     {
-      name: 'sp-calc-v3',
-      version: 3,
+      name: 'sp-calc-v4',
+      version: 4,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({ config: s.config, build: s.build }),
       merge: (persisted, current) => {

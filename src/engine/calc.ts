@@ -9,6 +9,7 @@ import type {
   LevelSnapshot,
   SkillDef,
   SkillId,
+  SkillProgress,
   SkillResult,
   StatId,
   Stats,
@@ -41,21 +42,64 @@ function costAtSorted(value: number, sorted: Threshold[], baseCost: number): num
   return cost
 }
 
-/** Base SP cost of one skill point at `value` (without tag multiplier). */
+/** SP cost of one step started at `value` (the tag never changes it). */
 export function costAt(value: number, config: Config): number {
   return costAtSorted(value, sortedThresholds(config), config.baseCost)
 }
 
-function nextBoundary(value: number, sorted: Threshold[], cap: number): number {
-  for (const t of sorted) {
-    if (t.from > value + EPS) return Math.min(t.from, cap)
-  }
-  return cap
+function stepGainOf(tagged: boolean, config: Config): number {
+  return tagged && config.tagPointsMultiplier > 0 ? config.tagPointsMultiplier : 1
 }
 
-/** Effective SP-per-point multiplier: a tagged skill gets `tagPointsMultiplier` points per SP-worth of cost. */
-function tagMult(tagged: boolean, config: Config): number {
-  return tagged && config.tagPointsMultiplier > 0 ? 1 / config.tagPointsMultiplier : 1
+/**
+ * Discrete Fallout-style leveling: each step costs `costAt(value at step start)` SP (tag never changes the cost)
+ * and raises the skill by `stepGain` (tagged: `tagPointsMultiplier`, else 1). SP short of a full step give
+ * proportional partial progress. A full step that crosses the cap still costs the full step.
+ */
+export function skillProgress(
+  start: number,
+  totalSP: number,
+  tagged: boolean,
+  config: Config,
+): SkillProgress {
+  const cap = config.skillMax
+  const sorted = sortedThresholds(config)
+  const gain = stepGainOf(tagged, config)
+  let v = start
+  let sp = Math.max(0, totalSP)
+  let lastFullStepSP = 0
+  let progressSP = 0
+  let stepStart = v
+
+  while (v < cap - EPS && sp > EPS) {
+    const cost = costAtSorted(v, sorted, config.baseCost)
+    stepStart = v
+    if (cost <= 0 || sp >= cost - EPS) {
+      const paid = Math.max(0, cost)
+      sp = Math.max(0, sp - paid)
+      v = Math.min(cap, v + gain)
+      lastFullStepSP = paid
+      stepStart = v
+    } else {
+      progressSP = sp
+      v = Math.min(cap, v + (sp / cost) * gain)
+      sp = 0
+    }
+  }
+
+  const atCap = v >= cap - EPS
+  if (atCap) v = cap
+  const stepCost = costAtSorted(atCap ? cap : stepStart, sorted, config.baseCost)
+  const overflowSP = round9(sp)
+  return {
+    value: round9(v),
+    overflowSP,
+    stepCost,
+    stepGain: gain,
+    stepProgressSP: round9(progressSP),
+    spToNextStep: atCap ? Infinity : round9(Math.max(0, stepCost - progressSP)),
+    lastStepSP: round9(overflowSP > EPS ? overflowSP : progressSP > EPS ? progressSP : lastFullStepSP),
+  }
 }
 
 export function spToValue(
@@ -64,61 +108,47 @@ export function spToValue(
   tagged: boolean,
   config: Config,
 ): { value: number; overflowSP: number } {
-  const cap = config.skillMax
-  const sorted = sortedThresholds(config)
-  const mult = tagMult(tagged, config)
-  let v = start
-  let sp = Math.max(0, totalSP)
-
-  if (v >= cap) return { value: round9(Math.min(v, cap)), overflowSP: round9(sp) }
-
-  while (sp > EPS && v < cap - EPS) {
-    const cost = costAtSorted(v, sorted, config.baseCost) * mult
-    const boundary = nextBoundary(v, sorted, cap)
-    if (cost <= 0) {
-      v = boundary
-      continue
-    }
-    const needed = (boundary - v) * cost
-    if (sp >= needed - EPS) {
-      sp -= needed
-      v = boundary
-    } else {
-      v += sp / cost
-      sp = 0
-    }
-  }
-
-  if (v >= cap - EPS) v = cap
-  return { value: round9(v), overflowSP: round9(Math.max(0, sp)) }
+  const { value, overflowSP } = skillProgress(start, totalSP, tagged, config)
+  return { value, overflowSP }
 }
 
-/** SP needed to raise the skill value from `from` to `to` (to <= cap). */
-function spBetween(from: number, to: number, tagged: boolean, config: Config): number {
-  const sorted = sortedThresholds(config)
-  const mult = tagMult(tagged, config)
-  let v = from
-  let sp = 0
-  while (v < to - EPS) {
-    const cost = costAtSorted(v, sorted, config.baseCost) * mult
-    const boundary = Math.min(nextBoundary(v, sorted, config.skillMax), to)
-    sp += (boundary - v) * Math.max(0, cost)
-    v = boundary
-  }
-  return sp
-}
-
-/** SP still needed for floor(value) to grow by 1 (Infinity at cap). */
-export function spToNextPoint(
+/**
+ * SP delta for `n` step-button presses. n > 0: complete next steps while `available` SP suffice
+ * (a step that does not fit is skipped entirely). n < 0: refund the most recent steps (partial progress /
+ * overflow first), never more than `refundLimit` in total.
+ */
+export function stepsDeltaSP(
   start: number,
   totalSP: number,
   tagged: boolean,
   config: Config,
-): number {
-  const { value } = spToValue(start, totalSP, tagged, config)
-  if (value >= config.skillMax) return Infinity
-  const target = Math.min(Math.floor(value + EPS) + 1, config.skillMax)
-  return round9(spBetween(value, target, tagged, config))
+  n: number,
+  limit: number,
+): { sp: number; steps: number } {
+  const count = Math.trunc(Math.abs(n))
+  let total = Math.max(0, totalSP)
+  let left = Math.max(0, limit)
+  let steps = 0
+  for (let i = 0; i < count; i++) {
+    const p = skillProgress(start, total, tagged, config)
+    if (n > 0) {
+      const need = p.spToNextStep
+      if (!Number.isFinite(need) || need <= EPS || need > left + EPS) break
+      total = round9(total + need)
+      left = Math.max(0, left - need)
+    } else {
+      const take = Math.min(p.lastStepSP, left)
+      if (take <= EPS) break
+      total = round9(total - take)
+      left = Math.max(0, left - take)
+      if (take < p.lastStepSP - EPS) {
+        steps++
+        break
+      }
+    }
+    steps++
+  }
+  return { sp: round9(total - Math.max(0, totalSP)), steps }
 }
 
 export function spPerLevel(stats: Stats, skilled: boolean, config: Config): number {
@@ -217,7 +247,8 @@ export function computeBuild(build: Build, config: Config): BuildResult {
     const d = direct[s.id] ?? 0
     const b = round9(bleed[s.id] ?? 0)
     const totalSP = round9(d + b)
-    const { value, overflowSP } = spToValue(start, totalSP, tagged, config)
+    const { value, overflowSP, stepCost, stepGain, stepProgressSP, spToNextStep, lastStepSP } =
+      skillProgress(start, totalSP, tagged, config)
     spSpent += d
     skills[s.id] = {
       id: s.id,
@@ -231,8 +262,11 @@ export function computeBuild(build: Build, config: Config): BuildResult {
       totalSP,
       value,
       overflowSP,
-      costPerPoint: round9(costAt(value, config) * tagMult(tagged, config)),
-      spToNextPoint: spToNextPoint(start, totalSP, tagged, config),
+      stepCost,
+      stepGain,
+      stepProgressSP,
+      spToNextStep,
+      lastStepSP,
     }
   }
 

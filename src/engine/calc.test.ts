@@ -8,8 +8,9 @@ import {
   directSP,
   spEarned,
   spPerLevel,
-  spToNextPoint,
+  skillProgress,
   spToValue,
+  stepsDeltaSP,
   statUsage,
 } from './calc'
 import { DEFAULT_BUILD, DEFAULT_CONFIG } from './defaults'
@@ -234,42 +235,75 @@ describe('пороги', () => {
     expect(costAt(160, config)).toBe(3)
   })
 
-  it('spToNextPoint', () => {
-    expect(spToNextPoint(95, 0, false, cfg)).toBe(1)
-    expect(spToNextPoint(100, 0, false, cfg)).toBe(2)
-    expect(spToNextPoint(100, 1, false, cfg)).toBe(1)
-    expect(spToNextPoint(99.5, 0, false, cfg)).toBe(0.5)
-    expect(spToNextPoint(100, 0, true, cfg)).toBe(1)
-    expect(spToNextPoint(300, 0, false, cfg)).toBe(Infinity)
+  it('skillProgress: шаг, частичный прогресс, кап', () => {
+    expect(skillProgress(95, 0, false, cfg)).toMatchObject({ stepCost: 1, stepGain: 1, spToNextStep: 1, lastStepSP: 0 })
+    expect(skillProgress(100, 0, false, cfg)).toMatchObject({ stepCost: 2, spToNextStep: 2 })
+    expect(skillProgress(100, 1, false, cfg)).toMatchObject({ value: 100.5, stepProgressSP: 1, spToNextStep: 1, lastStepSP: 1 })
+    expect(skillProgress(100, 4, false, cfg)).toMatchObject({ value: 102, stepProgressSP: 0, spToNextStep: 2, lastStepSP: 2 })
+    expect(skillProgress(100, 0, true, cfg)).toMatchObject({ stepCost: 2, stepGain: 2, spToNextStep: 2 })
+    expect(skillProgress(300, 0, false, cfg).spToNextStep).toBe(Infinity)
+  })
+})
+
+describe('тэг — дискретные шаги (как в Fallout)', () => {
+  it('без тэга до 100: 10 СП → +10; с тэгом: 10 СП → +20', () => {
+    expect(spToValue(40, 10, false, cfg).value).toBe(50)
+    expect(spToValue(40, 10, true, cfg).value).toBe(60)
+  })
+
+  it('тэг на 99 + 1 СП → 101 (цена шага по значению в начале шага)', () => {
+    expect(spToValue(99, 1, true, cfg).value).toBe(101)
+  })
+
+  it('на 100: с тэгом 2 СП → 102, без тэга 2 СП → 101', () => {
+    expect(spToValue(100, 2, true, cfg).value).toBe(102)
+    expect(spToValue(100, 2, false, cfg).value).toBe(101)
+  })
+
+  it('тэг 95 + 15 СП: 3 шага по 1 СП (→101), затем 6 шагов по 2 СП → 113', () => {
+    expect(spToValue(95, 15, true, cfg)).toEqual({ value: 113, overflowSP: 0 })
+  })
+
+  it('частичный прогресс от блида: 0.5 СП в шаг цены 1 с тэгом → +1, ещё 0.5 до конца шага', () => {
+    expect(skillProgress(40, 0.5, true, cfg)).toMatchObject({ value: 41, stepProgressSP: 0.5, spToNextStep: 0.5 })
+    expect(skillProgress(100, 0.5, true, cfg)).toMatchObject({ value: 100.5, spToNextStep: 1.5 })
+  })
+
+  it('шаг через кап стоит полный шаг, лишнее за капом = overflow', () => {
+    expect(spToValue(299, 6, true, cfg)).toEqual({ value: 300, overflowSP: 0 })
+    expect(spToValue(299, 8, true, cfg)).toEqual({ value: 300, overflowSP: 2 })
+  })
+
+  it('stepsDeltaSP: +N шагов в пределах доступных СП, −N возвращает ровно цену шагов', () => {
+    expect(stepsDeltaSP(45, 0, true, cfg, 1, 10)).toEqual({ sp: 1, steps: 1 })
+    expect(stepsDeltaSP(120, 0, false, cfg, 1, 10)).toEqual({ sp: 2, steps: 1 })
+    expect(stepsDeltaSP(98, 0, false, cfg, 10, 5)).toEqual({ sp: 4, steps: 3 })
+    expect(stepsDeltaSP(98, 4, false, cfg, -1, 4)).toEqual({ sp: -2, steps: 1 })
+    expect(stepsDeltaSP(98, 4, false, cfg, -10, 4)).toEqual({ sp: -4, steps: 3 })
+    expect(stepsDeltaSP(98, 4, false, cfg, -10, 3)).toEqual({ sp: -3, steps: 2 })
+    // partial (bleed) progress: +1 completes the step for the remaining SP
+    expect(stepsDeltaSP(100, 0.5, false, cfg, 1, 10)).toEqual({ sp: 1.5, steps: 1 })
   })
 })
 
 describe('тэг', () => {
-  it('×2 пункта за СП', () => {
-    expect(spToValue(100, 10, true, cfg).value).toBe(110)
-    // 5 pts × 0.5 = 2.5 SP, then 12.5 SP at 1 per point
-    expect(spToValue(95, 15, true, cfg).value).toBe(112.5)
-  })
-
-  it('+бонус к старту и ×2 в computeBuild', () => {
+  it('+бонус к старту; шаг стоит как обычно, даёт +2', () => {
     const r = computeBuild(withAlloc({ unarmed: 10 }, { tags: ['unarmed'] }), cfg)
     expect(r.skills.unarmed.start).toBe(120)
     expect(r.skills.unarmed.value).toBe(130)
-    expect(r.skills.unarmed.costPerPoint).toBe(1)
+    expect(r.skills.unarmed.stepCost).toBe(2)
+    expect(r.skills.unarmed.stepGain).toBe(2)
   })
 
-  it('тэг ×2 пункта за СП: 1 СП до 100 → +2, на пороге цены 2 → +1', () => {
+  it('до 100: 1 СП → +2; на пороге цены 2: 2 СП → +2', () => {
     const r = computeBuild(withAlloc({}, { tags: ['sneak'] }), cfg)
-    const s = r.skills.sneak
-    expect(s.start).toBe(40)
-    expect(s.costPerPoint).toBe(0.5)
+    expect(r.skills.sneak.start).toBe(40)
+    expect(r.skills.sneak.stepCost).toBe(1)
     expect(computeBuild(withAlloc({ sneak: 1 }, { tags: ['sneak'] }), cfg).skills.sneak.value).toBe(42)
-    expect(spToValue(100, 1, true, cfg).value).toBe(101)
-    expect(spToValue(100, 1, false, cfg).value).toBe(100.5)
     expect(spToValue(150, 3, true, cfg).value).toBe(152)
   })
 
-  it('tagPointsMultiplier настраивается', () => {
+  it('tagPointsMultiplier = пунктов за шаг, настраивается', () => {
     const config: Config = { ...cfg, tagPointsMultiplier: 3 }
     expect(spToValue(40, 1, true, config).value).toBe(43)
     expect(spToValue(40, 1, true, { ...cfg, tagPointsMultiplier: 0 }).value).toBe(41)

@@ -47,7 +47,7 @@ export interface SkillDef {
 export interface Threshold {
   /** skill value from which this cost applies */
   from: number
-  /** SP per one skill point */
+  /** SP per one step */
   cost: number
 }
 
@@ -59,7 +59,7 @@ export interface Config {
   bleedMode: BleedMode
   bleedCoefDefault: number
   tagBonus: number
-  /** skill points a tagged skill gets per 1 SP of base cost (2 = ×2 points) */
+  /** skill points a tagged skill gains per step (untagged = 1); the step cost is the same */
   tagPointsMultiplier: number
   tagsNormal: number
   tagsSkilled: number
@@ -111,6 +111,18 @@ export interface BleedNode {
   incoming: BleedLink[]
 }
 
+/** Step-based conversion of Total SP for one skill. */
+export interface SkillProgress {
+  /** exact (fractional when a step is partial), capped at skillMax */
+  value: number
+  overflowSP: number
+  stepCost: number
+  stepGain: number
+  stepProgressSP: number
+  spToNextStep: number
+  lastStepSP: number
+}
+
 export interface SkillResult {
   id: SkillId
   base: number
@@ -125,9 +137,16 @@ export interface SkillResult {
   /** exact (fractional), capped at skillMax */
   value: number
   overflowSP: number
-  /** effective SP per next point (tag multiplier applied) */
-  costPerPoint: number
-  spToNextPoint: number
+  /** SP for the next full step (= costAt of the step's start value) */
+  stepCost: number
+  /** points per step (tagged: tagPointsMultiplier, else 1) */
+  stepGain: number
+  /** SP already put into the current unfinished step */
+  stepProgressSP: number
+  /** SP left to complete the current step (= stepCost without partial progress; Infinity at cap) */
+  spToNextStep: number
+  /** SP that refunding the most recent step returns (overflow / partial progress first) */
+  lastStepSP: number
 }
 
 export interface BuildResult {

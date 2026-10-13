@@ -44,7 +44,7 @@ export function ThresholdsEditor() {
           <tr className="text-[10px] text-zinc-500">
             <th className="w-8 text-left font-normal">#</th>
             <th className="text-left font-normal">С значения (from)</th>
-            <th className="text-left font-normal">СП за пункт (cost)</th>
+            <th className="text-left font-normal">СП за шаг (cost)</th>
           </tr>
         </thead>
         <tbody>
