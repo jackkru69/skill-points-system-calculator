@@ -26,13 +26,20 @@ export interface StatDef {
   short: string
 }
 
+/**
+ * How `SkillDef.bleedLinks` / `SkillDef.bleedCoef` are interpreted:
+ * - 'incoming': links = skills this skill receives bleed from; coef belongs to this (receiving) skill.
+ * - 'outgoing': links = skills this skill bleeds into; coef belongs to this (source) skill.
+ */
+export type BleedMode = 'incoming' | 'outgoing'
+
 export interface SkillDef {
   id: SkillId
   name: string
   baseStats: [StatId, StatId]
   baseMult: number
-  /** null = slot unused; the same skill twice = double bleed */
-  bleedTargets: [SkillId | null, SkillId | null]
+  /** sources ('incoming') or targets ('outgoing'); null = slot unused; the same skill twice = double bleed */
+  bleedLinks: [SkillId | null, SkillId | null]
   /** null = use config.bleedCoefDefault */
   bleedCoef: number | null
 }
@@ -49,6 +56,7 @@ export interface Config {
   statMax: number
   statPool: number
   skills: SkillDef[]
+  bleedMode: BleedMode
   bleedCoefDefault: number
   tagBonus: number
   tagCostMultiplier: number
@@ -80,6 +88,26 @@ export interface Build {
 export interface BleedContribution {
   from: SkillId
   amount: number
+}
+
+/** One link-slot occurrence: `from` bleeds `coef` × Direct SP into `to`. */
+export interface BleedEdge {
+  from: SkillId
+  to: SkillId
+  coef: number
+}
+
+/** Aggregated link (duplicate slots summed into coef). */
+export interface BleedLink {
+  skill: SkillId
+  coef: number
+}
+
+export interface BleedNode {
+  /** skills this one bleeds into */
+  outgoing: BleedLink[]
+  /** skills this one receives bleed from */
+  incoming: BleedLink[]
 }
 
 export interface SkillResult {

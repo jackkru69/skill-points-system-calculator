@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { computeBuild, computeHistory, round9 } from '../engine/calc'
+import { bleedEdges, computeBuild, computeHistory, round9, spForPoints } from '../engine/calc'
 import { DEFAULT_BUILD, DEFAULT_CONFIG } from '../engine/defaults'
 import type {
   Build,
@@ -26,6 +26,7 @@ export interface AppState {
   toggleTag: (skillId: SkillId) => void
   setSkilled: (skilled: boolean) => void
   addSP: (skillId: SkillId, amount: number) => void
+  addPoints: (skillId: SkillId, points: number) => void
   setCurrentAlloc: (skillId: SkillId, value: number) => void
   levelUp: () => void
   levelUpTo: (n: number) => void
@@ -100,6 +101,42 @@ export const useAppStore = create<AppState>()(
         set({ build: withCurrentAlloc(build, skillId, next) })
       },
 
+      addPoints: (skillId, points) => {
+        const n = Math.trunc(points)
+        if (!Number.isFinite(n) || n === 0) return
+        const { build, config } = get()
+        const result = computeBuild(build, config)
+        const r = result.skills[skillId]
+        if (!r) return
+        // A self-link makes each direct SP raise own Total SP by (1 + self coef).
+        const selfGain = bleedEdges(config)
+          .filter((e) => e.from === skillId && e.to === skillId)
+          .reduce((sum, e) => sum + e.coef, 0)
+        const toDirect = (totalDelta: number) => totalDelta / (1 + selfGain)
+        const cur = currentAlloc(build, skillId)
+        let next: number
+        if (n < 0) {
+          const refund = -toDirect(spForPoints(r.start, r.totalSP, r.tagged, config, n))
+          next = Math.max(0, cur - refund)
+        } else {
+          const available = Math.max(0, result.spAvailable)
+          if (available <= 1e-9) return
+          let spend = 0
+          for (let k = n; k >= 1; k--) {
+            const need = toDirect(spForPoints(r.start, r.totalSP, r.tagged, config, k))
+            if (need <= available + 1e-9) {
+              spend = Math.min(need, available)
+              break
+            }
+          }
+          // Not even one point affordable → put the remainder in (partial progress).
+          if (spend <= 0 && r.value < config.skillMax - 1e-9) spend = available
+          next = cur + spend
+        }
+        if (round9(next) === round9(cur)) return
+        set({ build: withCurrentAlloc(build, skillId, next) })
+      },
+
       setCurrentAlloc: (skillId, value) => {
         if (!Number.isFinite(value)) return
         const { build, config } = get()
@@ -163,8 +200,8 @@ export const useAppStore = create<AppState>()(
       setConfigOpen: (configOpen) => set({ configOpen }),
     }),
     {
-      name: 'sp-calc-v1',
-      version: 1,
+      name: 'sp-calc-v2',
+      version: 2,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({ config: s.config, build: s.build }),
       merge: (persisted, current) => {

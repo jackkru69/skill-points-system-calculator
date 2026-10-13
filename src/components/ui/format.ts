@@ -14,10 +14,6 @@ export function plural(n: number, one: string, few: string, many: string): strin
   return many
 }
 
-export function roundUp2(n: number): number {
-  return Math.ceil(n * 100 - 1e-7) / 100
-}
-
 export function displayValue(value: number): number {
   return Math.floor(value + 1e-9)
 }

@@ -1,6 +1,8 @@
 import { SKILL_IDS, STAT_IDS } from './defaults'
 import type {
   BleedContribution,
+  BleedEdge,
+  BleedNode,
   Build,
   BuildResult,
   Config,
@@ -105,6 +107,33 @@ function spBetween(from: number, to: number, tagged: boolean, config: Config): n
   return sp
 }
 
+/**
+ * Total-SP delta needed to move the displayed (floored) value by `points` skill points:
+ * positive `points` → SP to add (target capped at skillMax, 0 at cap),
+ * negative `points` → negative SP to remove (target not below `start`).
+ */
+export function spForPoints(
+  start: number,
+  totalSP: number,
+  tagged: boolean,
+  config: Config,
+  points: number,
+): number {
+  const { value } = spToValue(start, totalSP, tagged, config)
+  const shown = Math.floor(value + EPS)
+  if (points > 0) {
+    if (value >= config.skillMax - EPS) return 0
+    const target = Math.min(shown + points, config.skillMax)
+    return round9(spBetween(value, target, tagged, config))
+  }
+  if (points < 0) {
+    const target = Math.max(shown + points, start)
+    if (target >= value - EPS) return 0
+    return round9(-spBetween(target, value, tagged, config))
+  }
+  return 0
+}
+
 /** SP still needed for floor(value) to grow by 1 (Infinity at cap). */
 export function spToNextPoint(
   start: number,
@@ -144,6 +173,49 @@ export function directSP(build: Build): Record<SkillId, number> {
   return out
 }
 
+function bleedCoefOf(skill: SkillDef, config: Config): number {
+  return skill.bleedCoef ?? config.bleedCoefDefault
+}
+
+/**
+ * All bleed link occurrences (a skill listed twice yields two edges), resolved per `config.bleedMode`:
+ * 'incoming' — links are sources of the skill, coef is the receiving skill's;
+ * 'outgoing' — links are targets of the skill, coef is the source skill's.
+ */
+export function bleedEdges(config: Config): BleedEdge[] {
+  const known = new Set(config.skills.map((s) => s.id))
+  const edges: BleedEdge[] = []
+  for (const s of config.skills) {
+    const coef = bleedCoefOf(s, config)
+    for (const link of s.bleedLinks) {
+      if (!link || !known.has(link)) continue
+      edges.push(
+        config.bleedMode === 'outgoing'
+          ? { from: s.id, to: link, coef }
+          : { from: link, to: s.id, coef },
+      )
+    }
+  }
+  return edges
+}
+
+function addLink(list: { skill: SkillId; coef: number }[], skill: SkillId, coef: number) {
+  const existing = list.find((l) => l.skill === skill)
+  if (existing) existing.coef = round9(existing.coef + coef)
+  else list.push({ skill, coef })
+}
+
+/** For each skill: whom it bleeds into and whom it receives from (duplicate links summed). */
+export function bleedGraph(config: Config): Record<SkillId, BleedNode> {
+  const graph = {} as Record<SkillId, BleedNode>
+  for (const s of config.skills) graph[s.id] = { outgoing: [], incoming: [] }
+  for (const e of bleedEdges(config)) {
+    addLink(graph[e.from].outgoing, e.to, e.coef)
+    addLink(graph[e.to].incoming, e.from, e.coef)
+  }
+  return graph
+}
+
 export function computeBuild(build: Build, config: Config): BuildResult {
   const direct = directSP(build)
   const current = build.levels[build.levels.length - 1]?.alloc ?? {}
@@ -152,18 +224,14 @@ export function computeBuild(build: Build, config: Config): BuildResult {
   const bleedFrom = {} as Record<SkillId, BleedContribution[]>
   for (const s of config.skills) bleedFrom[s.id] = []
 
-  for (const src of config.skills) {
-    const coef = src.bleedCoef ?? config.bleedCoefDefault
-    const amount = (direct[src.id] ?? 0) * coef
+  for (const e of bleedEdges(config)) {
+    const amount = (direct[e.from] ?? 0) * e.coef
     if (amount === 0) continue
-    for (const target of src.bleedTargets) {
-      if (!target) continue
-      bleed[target] = (bleed[target] ?? 0) + amount
-      const list = (bleedFrom[target] ??= [])
-      const existing = list.find((c) => c.from === src.id)
-      if (existing) existing.amount = round9(existing.amount + amount)
-      else list.push({ from: src.id, amount: round9(amount) })
-    }
+    bleed[e.to] = (bleed[e.to] ?? 0) + amount
+    const list = (bleedFrom[e.to] ??= [])
+    const existing = list.find((c) => c.from === e.from)
+    if (existing) existing.amount = round9(existing.amount + amount)
+    else list.push({ from: e.from, amount: round9(amount) })
   }
 
   const skills = {} as Record<SkillId, SkillResult>

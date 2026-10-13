@@ -38,10 +38,12 @@ const skill = (
   b: StatId,
   bleed: [SkillId | null, SkillId | null],
   baseMult = 1,
-): SkillDef => ({ id, name, baseStats: [a, b], baseMult, bleedTargets: bleed, bleedCoef: null })
+): SkillDef => ({ id, name, baseStats: [a, b], baseMult, bleedLinks: bleed, bleedCoef: null })
+
+/** Default links are 'incoming' (sources): previous and next neighbour, endpoints get their single neighbour twice. */
 
 export const DEFAULT_SKILLS: SkillDef[] = [
-  skill('smallGuns', 'Мелкие пушки', 'PE', 'AG', ['mediumGuns', null]),
+  skill('smallGuns', 'Мелкие пушки', 'PE', 'AG', ['mediumGuns', 'mediumGuns']),
   skill('mediumGuns', 'Средние пушки', 'PE', 'AG', ['smallGuns', 'bigGuns']),
   skill('bigGuns', 'Большие пушки', 'PE', 'ST', ['mediumGuns', 'throwing']),
   skill('throwing', 'Метательное', 'ST', 'AG', ['bigGuns', 'melee']),
@@ -55,7 +57,7 @@ export const DEFAULT_SKILLS: SkillDef[] = [
   skill('craft', 'Крафт', 'CH', 'LK', ['repair', 'science']),
   skill('science', 'Наука', 'PE', 'LK', ['craft', 'doctor']),
   skill('doctor', 'Доктор', 'PE', 'LK', ['science', 'firstAid']),
-  skill('firstAid', 'Санитар', 'ST', 'CH', ['doctor', null]),
+  skill('firstAid', 'Санитар', 'ST', 'CH', ['doctor', 'doctor']),
   skill('barter', 'Торговля', 'CH', 'CH', [null, null], 2),
 ]
 
@@ -64,6 +66,7 @@ export const DEFAULT_CONFIG: Config = {
   statMax: 10,
   statPool: 40,
   skills: DEFAULT_SKILLS,
+  bleedMode: 'incoming',
   bleedCoefDefault: 0.25,
   tagBonus: 20,
   tagCostMultiplier: 0.5,
@@ -72,7 +75,7 @@ export const DEFAULT_CONFIG: Config = {
   skilledBonusSP: 24,
   spPerIntCoef: 4,
   startingSP: 0,
-  maxLevel: 99,
+  maxLevel: 15,
   skillMax: 300,
   baseCost: 1,
   thresholds: [
@@ -85,7 +88,7 @@ export const DEFAULT_CONFIG: Config = {
 }
 
 export const DEFAULT_BUILD: Build = {
-  stats: { ST: 10, PE: 5, EN: 10, CH: 2, IN: 2, AG: 10, LK: 1 },
+  stats: { ST: 5, PE: 5, EN: 5, CH: 5, IN: 5, AG: 5, LK: 5 },
   tags: [],
   skilled: false,
   levels: [{ alloc: {} }],

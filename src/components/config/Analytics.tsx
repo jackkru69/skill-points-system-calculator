@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { STATS, statUsage } from '../../engine'
+import { STATS, bleedGraph, statUsage } from '../../engine'
 import type { SkillId, StatId } from '../../engine'
 import { useAppStore } from '../../store'
 import { Section } from './fields'
@@ -19,23 +19,7 @@ export function Analytics() {
     return occ
   }, [config.skills])
 
-  const { incoming, outgoing } = useMemo(() => {
-    const inc = new Map<SkillId, { from: SkillId; coef: number }[]>()
-    const out = new Map<SkillId, number>()
-    for (const src of config.skills) {
-      const coef = src.bleedCoef ?? config.bleedCoefDefault
-      for (const t of src.bleedTargets) {
-        if (!t) continue
-        out.set(src.id, (out.get(src.id) ?? 0) + coef)
-        const list = inc.get(t) ?? []
-        const existing = list.find((e) => e.from === src.id)
-        if (existing) existing.coef += coef
-        else list.push({ from: src.id, coef })
-        inc.set(t, list)
-      }
-    }
-    return { incoming: inc, outgoing: out }
-  }, [config.skills, config.bleedCoefDefault])
+  const graph = useMemo(() => bleedGraph(config), [config])
 
   const names = useMemo(
     () => Object.fromEntries(config.skills.map((s) => [s.id, s.name])) as Record<SkillId, string>,
@@ -87,9 +71,9 @@ export function Analytics() {
         </thead>
         <tbody>
           {config.skills.map((sk) => {
-            const inc = incoming.get(sk.id) ?? []
+            const inc = graph[sk.id]?.incoming ?? []
             const sumIn = inc.reduce((a, e) => a + e.coef, 0)
-            const sumOut = outgoing.get(sk.id) ?? 0
+            const sumOut = (graph[sk.id]?.outgoing ?? []).reduce((a, e) => a + e.coef, 0)
             return (
               <tr key={sk.id} className="border-t border-zinc-800/60 align-top">
                 <td className="py-0.5 pr-2 whitespace-nowrap text-zinc-200">{sk.name}</td>
@@ -98,9 +82,9 @@ export function Analytics() {
                     <span className="text-zinc-600">—</span>
                   ) : (
                     inc.map((e, i) => (
-                      <span key={e.from} className={e.from === sk.id ? 'text-red-400' : undefined}>
+                      <span key={e.skill} className={e.skill === sk.id ? 'text-red-400' : undefined}>
                         {i > 0 && ', '}
-                        {names[e.from] ?? e.from}
+                        {names[e.skill] ?? e.skill}
                         <span className="text-zinc-500 tabular-nums"> ×{fmtNum(e.coef)}</span>
                       </span>
                     ))

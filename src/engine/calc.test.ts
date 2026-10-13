@@ -1,26 +1,61 @@
 import { describe, expect, it } from 'vitest'
 import {
   baseValue,
+  bleedGraph,
   computeBuild,
   computeHistory,
   costAt,
   directSP,
   spEarned,
+  spForPoints,
   spPerLevel,
   spToNextPoint,
   spToValue,
   statUsage,
 } from './calc'
 import { DEFAULT_BUILD, DEFAULT_CONFIG } from './defaults'
-import type { Build, Config, SkillId } from './types'
+import type { Build, Config, SkillDef, SkillId, Stats } from './types'
 import { validateBuild } from './validate'
 
 const cfg = DEFAULT_CONFIG
 
+/** Stats of the control example from the ТЗ / client spreadsheet. */
+const TZ_STATS: Stats = { ST: 10, PE: 5, EN: 10, CH: 2, IN: 2, AG: 10, LK: 1 }
+const TZ_BUILD: Build = { ...DEFAULT_BUILD, stats: TZ_STATS }
+
 const withAlloc = (alloc: Partial<Record<SkillId, number>>, patch: Partial<Build> = {}): Build => ({
-  ...DEFAULT_BUILD,
+  ...TZ_BUILD,
   levels: [{ alloc }],
   ...patch,
+})
+
+const withSkills = (config: Config, patch: Partial<Record<SkillId, Partial<SkillDef>>>): Config => ({
+  ...config,
+  skills: config.skills.map((s) => (patch[s.id] ? { ...s, ...patch[s.id] } : s)),
+})
+
+/** Links/semantics of the pre-v2 default config (outgoing, coef of the source). */
+const LEGACY_OUTGOING: Config = withSkills(
+  { ...cfg, bleedMode: 'outgoing' },
+  { smallGuns: { bleedLinks: ['mediumGuns', null] }, firstAid: { bleedLinks: ['doctor', null] } },
+)
+
+describe('умолчания', () => {
+  it('все статы = 5 (5 свободных очков при пуле 40), макс. уровень 15, режим блида — входящий', () => {
+    expect(DEFAULT_BUILD.stats).toEqual({ ST: 5, PE: 5, EN: 5, CH: 5, IN: 5, AG: 5, LK: 5 })
+    expect(cfg.statPool - Object.values(DEFAULT_BUILD.stats).reduce((a, b) => a + b, 0)).toBe(5)
+    expect(cfg.maxLevel).toBe(15)
+    expect(cfg.bleedMode).toBe('incoming')
+  })
+
+  it('связи по умолчанию: соседи, концы — один сосед дважды, Торговля без блида', () => {
+    const links = Object.fromEntries(cfg.skills.map((s) => [s.id, s.bleedLinks]))
+    expect(links.smallGuns).toEqual(['mediumGuns', 'mediumGuns'])
+    expect(links.mediumGuns).toEqual(['smallGuns', 'bigGuns'])
+    expect(links.doctor).toEqual(['science', 'firstAid'])
+    expect(links.firstAid).toEqual(['doctor', 'doctor'])
+    expect(links.barter).toEqual([null, null])
+  })
 })
 
 describe('базы (контрольный пример ТЗ)', () => {
@@ -44,18 +79,52 @@ describe('базы (контрольный пример ТЗ)', () => {
       barter: 8,
     }
     for (const s of cfg.skills) {
-      expect(baseValue(s, DEFAULT_BUILD.stats), s.id).toBe(expected[s.id])
+      expect(baseValue(s, TZ_STATS), s.id).toBe(expected[s.id])
     }
   })
 })
 
-describe('блид', () => {
-  it('10 в мелкие / 25 в средние → 16.25 / 27.5 Total SP', () => {
-    const r = computeBuild(withAlloc({ smallGuns: 10, mediumGuns: 25 }), cfg)
-    expect(r.skills.smallGuns.totalSP).toBe(16.25)
+describe('блид — таблица клиента (входящий режим)', () => {
+  it('Средние X → Мелкие получают 0.5X', () => {
+    const r = computeBuild(withAlloc({ mediumGuns: 40 }), cfg)
+    expect(r.skills.smallGuns.bleedSP).toBe(20)
+    expect(r.skills.smallGuns.totalSP).toBe(20)
+    expect(r.skills.smallGuns.bleedFrom).toEqual([{ from: 'mediumGuns', amount: 20 }])
+    expect(r.skills.bigGuns.bleedSP).toBe(10)
+  })
+
+  it('Средние = own + 0.25·Мелкие + 0.25·Большие', () => {
+    const r = computeBuild(withAlloc({ smallGuns: 12, mediumGuns: 7, bigGuns: 20 }), cfg)
+    expect(r.skills.mediumGuns.totalSP).toBe(7 + 3 + 5)
+    expect(r.skills.mediumGuns.bleedFrom).toEqual([
+      { from: 'smallGuns', amount: 3 },
+      { from: 'bigGuns', amount: 5 },
+    ])
+    expect(r.skills.smallGuns.totalSP).toBe(12 + 3.5)
+  })
+
+  it('Доктор D → Санитар 0.5D; Торговля не получает ничего', () => {
+    const all = Object.fromEntries(cfg.skills.map((s) => [s.id, 10])) as Record<SkillId, number>
+    const r = computeBuild(withAlloc({ ...all, doctor: 30 }), cfg)
+    expect(r.skills.firstAid.totalSP).toBe(10 + 15)
+    expect(r.skills.barter.bleedSP).toBe(0)
+    expect(r.skills.barter.totalSP).toBe(10)
+    expect(r.skills.barter.bleedFrom).toEqual([])
+    // Торговля никуда не блидит
+    expect(r.skills.craft.bleedFrom.map((b) => b.from)).toEqual(['repair', 'science'])
+  })
+
+  it('пример ТЗ: 10 в большие / 25 в средние → 16.25 / 27.5', () => {
+    const r = computeBuild(withAlloc({ bigGuns: 10, mediumGuns: 25 }), cfg)
+    expect(r.skills.bigGuns.totalSP).toBe(16.25)
     expect(r.skills.mediumGuns.totalSP).toBe(27.5)
+  })
+
+  it('10 в мелкие / 25 в средние: средние 27.5, мелкие 10 + 0.5·25 = 22.5', () => {
+    const r = computeBuild(withAlloc({ smallGuns: 10, mediumGuns: 25 }), cfg)
+    expect(r.skills.mediumGuns.totalSP).toBe(27.5)
+    expect(r.skills.smallGuns.totalSP).toBe(22.5)
     expect(r.skills.bigGuns.bleedSP).toBe(6.25)
-    expect(r.skills.smallGuns.bleedFrom).toEqual([{ from: 'mediumGuns', amount: 6.25 }])
   })
 
   it('96 в рукопашку → холодное 24, скрытность 24', () => {
@@ -68,21 +137,75 @@ describe('блид', () => {
     expect(r.spSpent).toBe(96)
   })
 
-  it('без каскада и двойной блид при одинаковых целях', () => {
-    const config: Config = {
-      ...cfg,
-      skills: cfg.skills.map((s) =>
-        s.id === 'barter' ? { ...s, bleedTargets: ['craft', 'craft'], bleedCoef: 0.5 } : s,
-      ),
-    }
+  it('коэф. принадлежит получателю', () => {
+    const config = withSkills(cfg, { melee: { bleedCoef: 0.5 } })
+    const r = computeBuild(withAlloc({ unarmed: 96 }), config)
+    expect(r.skills.melee.bleedSP).toBe(48)
+    expect(r.skills.sneak.bleedSP).toBe(24)
+  })
+
+  it('без каскада и двойной блид при одинаковых источниках', () => {
+    const config = withSkills(cfg, { craft: { bleedLinks: ['barter', 'barter'], bleedCoef: 0.5 } })
     const r = computeBuild(withAlloc({ barter: 10 }), config)
     expect(r.skills.craft.bleedSP).toBe(10)
     expect(r.skills.craft.bleedFrom).toEqual([{ from: 'barter', amount: 10 }])
     expect(r.skills.repair.bleedSP).toBe(0)
+    expect(r.skills.science.bleedSP).toBe(0)
+  })
+})
+
+describe('блид — исходящий режим', () => {
+  it('10 в мелкие / 25 в средние → 16.25 / 27.5 Total SP (связи и семантика ТЗ v1)', () => {
+    const r = computeBuild(withAlloc({ smallGuns: 10, mediumGuns: 25 }), LEGACY_OUTGOING)
+    expect(r.skills.smallGuns.totalSP).toBe(16.25)
+    expect(r.skills.mediumGuns.totalSP).toBe(27.5)
+    expect(r.skills.bigGuns.bleedSP).toBe(6.25)
+    expect(r.skills.smallGuns.bleedFrom).toEqual([{ from: 'mediumGuns', amount: 6.25 }])
   })
 
+  it('96 в рукопашку → 24/24; коэф. принадлежит источнику', () => {
+    const r = computeBuild(withAlloc({ unarmed: 96 }), LEGACY_OUTGOING)
+    expect(r.skills.melee.bleedSP).toBe(24)
+    expect(r.skills.sneak.bleedSP).toBe(24)
+    const config = withSkills(LEGACY_OUTGOING, { unarmed: { bleedCoef: 0.5 } })
+    expect(computeBuild(withAlloc({ unarmed: 96 }), config).skills.melee.bleedSP).toBe(48)
+  })
+
+  it('двойной блид при одинаковых целях', () => {
+    const config = withSkills(LEGACY_OUTGOING, { barter: { bleedLinks: ['craft', 'craft'], bleedCoef: 0.5 } })
+    const r = computeBuild(withAlloc({ barter: 10 }), config)
+    expect(r.skills.craft.bleedSP).toBe(10)
+    expect(r.skills.craft.bleedFrom).toEqual([{ from: 'barter', amount: 10 }])
+  })
+})
+
+describe('bleedGraph', () => {
+  it('входящий режим: источники/цели и сумма коэф. для дублей', () => {
+    const g = bleedGraph(cfg)
+    expect(g.smallGuns.incoming).toEqual([{ skill: 'mediumGuns', coef: 0.5 }])
+    expect(g.smallGuns.outgoing).toEqual([{ skill: 'mediumGuns', coef: 0.25 }])
+    expect(g.mediumGuns.outgoing).toEqual([
+      { skill: 'smallGuns', coef: 0.5 },
+      { skill: 'bigGuns', coef: 0.25 },
+    ])
+    expect(g.doctor.outgoing).toEqual([
+      { skill: 'science', coef: 0.25 },
+      { skill: 'firstAid', coef: 0.5 },
+    ])
+    expect(g.barter).toEqual({ incoming: [], outgoing: [] })
+  })
+
+  it('исходящий режим: связи = цели', () => {
+    const g = bleedGraph(LEGACY_OUTGOING)
+    expect(g.smallGuns.outgoing).toEqual([{ skill: 'mediumGuns', coef: 0.25 }])
+    expect(g.smallGuns.incoming).toEqual([{ skill: 'mediumGuns', coef: 0.25 }])
+    expect(g.firstAid.incoming).toEqual([{ skill: 'doctor', coef: 0.25 }])
+  })
+})
+
+describe('прямые СП', () => {
   it('directSP суммирует уровни', () => {
-    const b: Build = { ...DEFAULT_BUILD, levels: [{ alloc: { melee: 3 } }, { alloc: { melee: 4.5 } }] }
+    const b: Build = { ...TZ_BUILD, levels: [{ alloc: { melee: 3 } }, { alloc: { melee: 4.5 } }] }
     expect(directSP(b).melee).toBe(7.5)
     expect(computeBuild(b, cfg).skills.melee.currentLevelSP).toBe(4.5)
   })
@@ -122,6 +245,51 @@ describe('пороги', () => {
   })
 })
 
+describe('spForPoints', () => {
+  it('+N пунктов: цена с порогами и дробным остатком', () => {
+    expect(spForPoints(50, 0, false, cfg, 1)).toBe(1)
+    expect(spForPoints(50, 0, false, cfg, 10)).toBe(10)
+    // 95 → 105: 5 × 1 + 5 × 2
+    expect(spForPoints(95, 0, false, cfg, 10)).toBe(15)
+    // 55.5 → 56
+    expect(spForPoints(50, 5.5, false, cfg, 1)).toBe(0.5)
+    expect(spForPoints(299, 0, false, cfg, 10)).toBe(6)
+    expect(spForPoints(300, 0, false, cfg, 1)).toBe(0)
+  })
+
+  it('тэг: пункт до 100 стоит 0.5 СП, после — 1', () => {
+    expect(spForPoints(70, 0, true, cfg, 1)).toBe(0.5)
+    expect(spForPoints(70, 0, true, cfg, 10)).toBe(5)
+    expect(spForPoints(100, 0, true, cfg, 1)).toBe(1)
+    expect(spForPoints(95, 0, true, cfg, 10)).toBe(7.5)
+  })
+
+  it('−N пунктов: отрицательная дельта, не ниже старта', () => {
+    expect(spForPoints(50, 10, false, cfg, -1)).toBe(-1)
+    expect(spForPoints(50, 10, false, cfg, -10)).toBe(-10)
+    expect(spForPoints(50, 10, false, cfg, -50)).toBe(-10)
+    // 55.5 (показано 55) → 54
+    expect(spForPoints(50, 5.5, false, cfg, -1)).toBe(-1.5)
+    expect(spForPoints(95, 7.5, true, cfg, -10)).toBe(-7.5)
+    expect(spForPoints(50, 0, false, cfg, -1)).toBe(0)
+  })
+
+  it('согласован с spToValue', () => {
+    for (const [start, sp, tagged] of [
+      [37, 12.3, false],
+      [95, 3, true],
+      [140, 80, false],
+      [260, 10, true],
+    ] as const) {
+      for (const n of [1, 5, 10, 50]) {
+        const v0 = Math.floor(spToValue(start, sp, tagged, cfg).value + 1e-9)
+        const d = spForPoints(start, sp, tagged, cfg, n)
+        expect(spToValue(start, sp + d, tagged, cfg).value).toBeCloseTo(Math.min(v0 + n, cfg.skillMax), 9)
+      }
+    }
+  })
+})
+
 describe('тэг', () => {
   it('полцены', () => {
     expect(spToValue(100, 10, true, cfg).value).toBe(110)
@@ -134,6 +302,16 @@ describe('тэг', () => {
     expect(r.skills.unarmed.start).toBe(120)
     expect(r.skills.unarmed.value).toBe(130)
     expect(r.skills.unarmed.costPerPoint).toBe(1)
+  })
+
+  it('+1 пункт тэгнутого навыка до 100 стоит 0.5 СП', () => {
+    const r = computeBuild(withAlloc({}, { tags: ['sneak'] }), cfg)
+    const s = r.skills.sneak
+    expect(s.start).toBe(40)
+    expect(s.costPerPoint).toBe(0.5)
+    expect(spForPoints(s.start, s.totalSP, s.tagged, cfg, 1)).toBe(0.5)
+    const r2 = computeBuild(withAlloc({ sneak: 0.5 }, { tags: ['sneak'] }), cfg)
+    expect(r2.skills.sneak.value).toBe(41)
   })
 
   it('тэг источника не влияет на блид', () => {
@@ -158,7 +336,7 @@ describe('кап', () => {
 
 describe('валидация', () => {
   it('Скиллед + 3 тэга → error', () => {
-    const b: Build = { ...DEFAULT_BUILD, skilled: true, tags: ['unarmed', 'melee', 'throwing'] }
+    const b: Build = { ...TZ_BUILD, skilled: true, tags: ['unarmed', 'melee', 'throwing'] }
     const issues = validateBuild(b, cfg)
     expect(issues).toContainEqual({
       level: 'error',
@@ -168,8 +346,8 @@ describe('валидация', () => {
 
   it('меньше тэгов → warning; перерасход СП → error; статы', () => {
     const b: Build = {
-      ...DEFAULT_BUILD,
-      stats: { ...DEFAULT_BUILD.stats, ST: 11 },
+      ...TZ_BUILD,
+      stats: { ...TZ_STATS, ST: 11 },
       levels: [{ alloc: { melee: 5 } }],
     }
     const issues = validateBuild(b, cfg)
@@ -183,13 +361,14 @@ describe('валидация', () => {
 
 describe('СП за уровень', () => {
   it('4*IN (+24)', () => {
-    expect(spPerLevel(DEFAULT_BUILD.stats, false, cfg)).toBe(8)
-    expect(spPerLevel(DEFAULT_BUILD.stats, true, cfg)).toBe(32)
+    expect(spPerLevel(TZ_STATS, false, cfg)).toBe(8)
+    expect(spPerLevel(TZ_STATS, true, cfg)).toBe(32)
+    expect(spPerLevel(DEFAULT_BUILD.stats, false, cfg)).toBe(20)
   })
 
   it('spEarned: уровень 1 = startingSP, далее + за уровень', () => {
-    expect(spEarned(DEFAULT_BUILD, cfg)).toBe(0)
-    const b: Build = { ...DEFAULT_BUILD, levels: [{ alloc: {} }, { alloc: {} }, { alloc: {} }] }
+    expect(spEarned(TZ_BUILD, cfg)).toBe(0)
+    const b: Build = { ...TZ_BUILD, levels: [{ alloc: {} }, { alloc: {} }, { alloc: {} }] }
     expect(spEarned(b, cfg)).toBe(16)
     const r = computeBuild({ ...b, skilled: true }, cfg)
     expect(r.spEarned).toBe(64)
@@ -205,7 +384,7 @@ describe('прочее', () => {
 
   it('computeHistory — кумулятивно', () => {
     const b: Build = {
-      ...DEFAULT_BUILD,
+      ...TZ_BUILD,
       levels: [{ alloc: {} }, { alloc: { unarmed: 8 } }, { alloc: { unarmed: 8 } }],
     }
     const h = computeHistory(b, cfg)

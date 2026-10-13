@@ -1,5 +1,5 @@
 import { DEFAULT_BUILD, DEFAULT_CONFIG, SKILL_IDS, STAT_IDS } from '../engine/defaults'
-import type { Build, Config, LevelRecord, SkillDef, SkillId, Threshold } from '../engine/types'
+import type { BleedMode, Build, Config, LevelRecord, SkillDef, SkillId, Threshold } from '../engine/types'
 
 export interface SharedState {
   build: Build
@@ -11,12 +11,20 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const isSkillId = (v: unknown): v is SkillId =>
   typeof v === 'string' && (SKILL_IDS as string[]).includes(v)
+const isBleedMode = (v: unknown): v is BleedMode => v === 'incoming' || v === 'outgoing'
 
-function sanitizeSkill(def: SkillDef, raw: unknown): SkillDef {
+/** Pre-v2 configs stored outgoing links as `bleedTargets` and had no `bleedMode`. */
+function isLegacyBleed(raw: Record<string, unknown>): boolean {
+  if (isBleedMode(raw.bleedMode)) return false
+  return Array.isArray(raw.skills) && raw.skills.some((s) => isObj(s) && Array.isArray(s.bleedTargets))
+}
+
+function sanitizeSkill(def: SkillDef, raw: unknown, legacy: boolean): SkillDef {
   if (!isObj(raw)) return def
   const stats = Array.isArray(raw.baseStats) ? raw.baseStats : []
   const statOk = (v: unknown) => typeof v === 'string' && (STAT_IDS as string[]).includes(v)
-  const bleed = Array.isArray(raw.bleedTargets) ? raw.bleedTargets : []
+  const rawLinks = legacy ? raw.bleedTargets : raw.bleedLinks
+  const bleed = Array.isArray(rawLinks) ? rawLinks : []
   const target = (v: unknown, fallback: SkillId | null) =>
     v === null ? null : isSkillId(v) ? v : fallback
   return {
@@ -27,9 +35,9 @@ function sanitizeSkill(def: SkillDef, raw: unknown): SkillDef {
       statOk(stats[1]) ? stats[1] : def.baseStats[1],
     ] as SkillDef['baseStats'],
     baseMult: isNum(raw.baseMult) ? raw.baseMult : def.baseMult,
-    bleedTargets: [
-      target(bleed[0], def.bleedTargets[0]),
-      target(bleed[1], def.bleedTargets[1]),
+    bleedLinks: [
+      target(bleed[0], def.bleedLinks[0]),
+      target(bleed[1], def.bleedLinks[1]),
     ],
     bleedCoef: raw.bleedCoef === null ? null : isNum(raw.bleedCoef) ? raw.bleedCoef : def.bleedCoef,
   }
@@ -37,18 +45,21 @@ function sanitizeSkill(def: SkillDef, raw: unknown): SkillDef {
 
 /** Fill missing/invalid fields of an untrusted config with defaults. */
 export function sanitizeConfig(raw: unknown): Config {
-  const out: Config = { ...DEFAULT_CONFIG }
-  if (!isObj(raw)) return structuredClone(out)
+  const out: Config = structuredClone(DEFAULT_CONFIG)
+  if (!isObj(raw)) return out
   for (const key of Object.keys(DEFAULT_CONFIG) as (keyof Config)[]) {
-    if (key === 'skills' || key === 'thresholds') continue
+    if (typeof DEFAULT_CONFIG[key] !== 'number') continue
     const v = raw[key]
     if (isNum(v)) (out[key] as number) = v
   }
+  const legacy = isLegacyBleed(raw)
+  out.bleedMode = legacy ? 'outgoing' : isBleedMode(raw.bleedMode) ? raw.bleedMode : DEFAULT_CONFIG.bleedMode
   const rawSkills = Array.isArray(raw.skills) ? raw.skills : []
   out.skills = DEFAULT_CONFIG.skills.map((def) =>
     sanitizeSkill(
       def,
       rawSkills.find((s) => isObj(s) && s.id === def.id),
+      legacy,
     ),
   )
   const rawTh = Array.isArray(raw.thresholds) ? raw.thresholds : []
