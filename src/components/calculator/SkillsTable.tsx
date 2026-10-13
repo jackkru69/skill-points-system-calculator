@@ -15,6 +15,18 @@ import { Button, Tooltip, cn, displayValue, fmt, roundUp2 } from '../ui'
 type Relation = 'self' | 'target' | 'source' | 'both' | null
 
 const EPS = 1e-9
+
+// Opaque equivalent of the panel background (zinc-900/60 over zinc-950) so sticky cells hide scrolled content.
+const STICKY_CELL = 'sticky z-[1] bg-[color-mix(in_oklab,var(--color-zinc-900)_60%,var(--color-zinc-950))]'
+
+// Row tints are background-images so they can be layered over the opaque sticky-cell color.
+const ROW_TINT: Record<NonNullable<Relation> | 'tagged', string> = {
+  self: 'from-zinc-800/70 to-zinc-800/70',
+  target: 'from-sky-500/15 to-sky-500/15',
+  source: 'from-emerald-500/15 to-emerald-500/15',
+  both: 'from-sky-500/15 to-emerald-500/15',
+  tagged: 'from-amber-500/[0.06] to-amber-500/[0.06]',
+}
 const STAT_SHORT = Object.fromEntries(STATS.map((s) => [s.id, s.short])) as Record<StatId, string>
 
 function formula(skill: SkillDef): string {
@@ -44,8 +56,11 @@ function spForPoints(r: SkillResult, points: number, available: number, config: 
 
 export function SkillsTable() {
   const config = useAppStore((s) => s.config)
+  const levelUp = useAppStore((s) => s.levelUp)
   const result = useBuildResult()
   const [hovered, setHovered] = useState<SkillId | null>(null)
+  const { level, spAvailable, spEarned, spPerLevel } = result
+  const showLevelHint = spAvailable <= EPS && level < config.maxLevel
 
   const names = useMemo(
     () => Object.fromEntries(config.skills.map((s) => [s.id, s.name])) as Record<SkillId, string>,
@@ -72,7 +87,17 @@ export function SkillsTable() {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/60">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
-        <h2 className="text-xs font-semibold tracking-wider text-zinc-400 uppercase">Навыки</h2>
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-xs font-semibold tracking-wider text-zinc-400 uppercase">Навыки</h2>
+          <span
+            className={cn(
+              'text-xs tabular-nums',
+              spAvailable < -EPS ? 'text-red-300' : spAvailable > EPS ? 'text-emerald-300' : 'text-zinc-500',
+            )}
+          >
+            доступно {fmt(spAvailable)} СП
+          </span>
+        </div>
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-zinc-500">
           <span className="flex items-center gap-1">
             <span className="size-2 rounded-sm bg-sky-400" /> блидит в
@@ -83,12 +108,26 @@ export function SkillsTable() {
           <span>Shift — ×5</span>
         </div>
       </div>
+      {showLevelHint && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-zinc-800 bg-sky-500/5 px-3 py-2 text-xs text-sky-200">
+          <span className="min-w-0 flex-1">
+            {level === 1 && spEarned <= EPS
+              ? `На 1 уровне свободных СП нет. Нажмите «Level Up», чтобы получить ${fmt(spPerLevel)} СП и вложить их в навыки.`
+              : `Все СП распределены. «Level Up» даст ещё ${fmt(spPerLevel)} СП.`}
+          </span>
+          <Button variant="primary" onClick={levelUp}>
+            Level Up → {level + 1}
+          </Button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1040px] border-collapse text-sm tabular-nums">
           <thead className="sticky top-0 z-10 bg-zinc-900 text-[11px] tracking-wide text-zinc-500 uppercase">
             <tr className="border-b border-zinc-800">
-              <th className="w-8 px-2 py-1.5 text-center font-medium" title="Тэг">★</th>
-              <th className="px-2 py-1.5 text-left font-medium">Навык</th>
+              <th className="sticky left-0 w-8 bg-zinc-900 px-2 py-1.5 text-center font-medium" title="Тэг">★</th>
+              <th className="sticky left-8 bg-zinc-900 px-2 py-1.5 text-left font-medium shadow-[1px_0_0_var(--color-zinc-800)]">
+                Навык
+              </th>
               <th className="px-2 py-1.5 text-left font-medium">Формула</th>
               <th className="px-2 py-1.5 text-right font-medium">База</th>
               <th className="px-2 py-1.5 text-right font-medium" title="Вложено напрямую (в скобках — на текущем уровне)">
@@ -156,6 +195,8 @@ const SkillRow = memo(function SkillRow({
   const nextNeed = r.spToNextPoint
   const canPercent = Number.isFinite(nextNeed) && nextNeed <= spAvailable + EPS
 
+  const tint = cn('bg-linear-to-r', relation ? ROW_TINT[relation] : r.tagged && ROW_TINT.tagged)
+
   const mult = (e: MouseEvent) => (e.shiftKey ? 5 : 1)
   const add = (amount: number) => (e: MouseEvent) => addSP(skill.id, amount * mult(e))
   const addPercent = (e: MouseEvent) => {
@@ -164,18 +205,8 @@ const SkillRow = memo(function SkillRow({
   }
 
   return (
-    <tr
-      onMouseEnter={() => onHover(skill.id)}
-      className={cn(
-        'border-b border-zinc-800/70 transition-colors',
-        r.tagged && 'bg-amber-500/[0.06]',
-        relation === 'self' && 'bg-zinc-800/70',
-        relation === 'target' && 'bg-sky-500/15',
-        relation === 'source' && 'bg-emerald-500/15',
-        relation === 'both' && 'bg-gradient-to-r from-sky-500/15 to-emerald-500/15',
-      )}
-    >
-      <td className="relative px-2 py-1 text-center">
+    <tr onMouseEnter={() => onHover(skill.id)} className={cn('border-b border-zinc-800/70', tint)}>
+      <td className={cn('left-0 px-2 py-1 text-center', STICKY_CELL, tint)}>
         <span
           className={cn(
             'absolute inset-y-0 left-0 w-0.5',
@@ -197,7 +228,7 @@ const SkillRow = memo(function SkillRow({
           {r.tagged ? '★' : '☆'}
         </button>
       </td>
-      <td className="px-2 py-1">
+      <td className={cn('left-8 px-2 py-1 shadow-[1px_0_0_var(--color-zinc-800)]', STICKY_CELL, tint)}>
         <Tooltip
           content={
             targets.length ? (

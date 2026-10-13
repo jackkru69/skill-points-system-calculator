@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type { Build, Config } from '../engine'
-import { encodeState, useAppStore } from '../store'
+import { getShareUrl, useAppStore } from '../store'
 import { Button } from './ui'
 
 type Flash = { text: string; tone: 'ok' | 'error' } | null
@@ -41,8 +41,7 @@ export function Header() {
   }, [flash])
 
   const share = async () => {
-    const { build, config } = useAppStore.getState()
-    const url = `${location.origin}${location.pathname}#s=${encodeState({ build, config })}`
+    const url = getShareUrl()
     try {
       await navigator.clipboard.writeText(url)
       setFlash({ text: 'Ссылка скопирована', tone: 'ok' })

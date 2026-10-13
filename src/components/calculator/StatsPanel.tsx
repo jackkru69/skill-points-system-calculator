@@ -40,8 +40,10 @@ export function StatsPanel() {
             <li key={stat.id} className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-1.5">
-                  <span className="w-9 text-xs font-semibold text-amber-400/90">{stat.short}</span>
-                  <span className="truncate text-sm text-zinc-300">{stat.name}</span>
+                  <span className="w-8 shrink-0 text-xs font-semibold text-amber-400/90">{stat.short}</span>
+                  <span className="truncate text-sm text-zinc-300" title={stat.name}>
+                    {stat.name}
+                  </span>
                   <span
                     className="ml-auto text-[10px] text-zinc-600 tabular-nums"
                     title="В скольких базах навыков участвует стат"
@@ -72,7 +74,7 @@ export function StatsPanel() {
                 max={config.statMax}
                 integer
                 aria-label={stat.name}
-                className={cn('w-10 text-center', outOfRange && 'border-red-500 text-red-300')}
+                className={cn('w-10! text-center!', outOfRange && 'border-red-500! text-red-300!')}
               />
               <Button
                 size="xs"
